@@ -1,21 +1,28 @@
 # new_idea
 
-记录因果研究「新 idea」的思考、选题评估与决策过程。
+独立研究项目：**语义先验引导的联邦稳定因果特征发现**（方向 A）。
 
-## 用途
+按 ResearchPilot-Skills 的格式组织，与主资料库 `E:\因果研究\docs\researcha\` 分开维护。
 
-- 记录候选 idea 的提出、新颖性核查、正反评估与最终决策；
-- 沉淀每次讨论的结论，避免重复踩坑；
-- 作为正式研究资料库（`E:\因果研究\docs\researcha\`）之外的轻量 idea 工作台。
-
-## 目录约定
+## 目录结构
 
 ```
-ideas/          按日期记录每次 idea 讨论与选题评估
-  YYYY-MM-DD-xxx.md
+新idea尝试/
+├── docs/                     ← ResearchPilot 标准产物
+│   ├── idea_report.md        ← 研究报告（Part 1/2/3）
+│   ├── user_requirements.md  ← 用户约束（AI 自动维护）
+│   └── papers/               ← 相关论文
+├── ideas/                    ← 过程留痕（idea 讨论与选题评估）
+│   └── YYYY-MM-DD-xxx.md
+└── README.md
 ```
 
-## 记录索引（按时间）
+## 当前状态
+
+- 阶段 A（方向探索）进行中：`docs/idea_report.md` Part 1 已起草，状态 PENDING_REVIEW。
+- 三层 RQ 候选：RQ1 核心 / RQ2 机制 / RQ3 边界，待确认。
+
+## 记录索引（ideas/ 过程留痕）
 
 | 日期 | 记录 | 结论 |
 |---|---|---|
@@ -24,10 +31,3 @@ ideas/          按日期记录每次 idea 讨论与选题评估
 | 2026-11-24 | [方向A问题定义](ideas/2026-11-24-方向A问题定义.md) | 一页问题定义：四态判定 + 方法边界 + Go/No-Go |
 | 2026-11-24 | [方向A可行性验证](ideas/2026-11-24-方向A可行性验证.md) | 语义先验救回弱稳定特征，recall 0.875→1.0（8 种子） |
 | 2026-11-24 | [方向A冲突gate验证](ideas/2026-11-24-方向A冲突gate验证.md) | conflict gate 兜住噪声先验，D2 local 0.625→0 |
-
-## 背景主线
-
-正式研究方向仍在阶段 A（方向探索），当前主线候选为 **FM-SPC：联邦多标签稳定父变量核心**，
-靶子代码为 FedCIFL（AAAI 2025）。详见主资料库 `E:\因果研究\docs\researcha\`。
-
-当前探索重点为 **方向 A：语义先验引导的联邦稳定因果特征发现**（可独立于 FM-SPC 主线评估）。
