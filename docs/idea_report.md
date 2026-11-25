@@ -1,5 +1,5 @@
 # 语义先验引导的联邦稳定因果特征发现 Idea Report
-> 生成时间：2026-11-24 | 状态：PENDING_REVIEW
+> 生成时间：2026-11-24 | 更新：2026-11-26（Part 1 + Part 2） | 状态：PENDING_REVIEW
 
 ---
 
@@ -89,6 +89,149 @@
 
 ---
 
+## Part 2 Idea Design
+
+### 1 Introduction
+
+Federated causal feature selection aims to identify features that causally affect a target label from data distributed across multiple clients, without sharing raw data. It supports downstream out-of-distribution (OOD) generalization while respecting privacy constraints.
+
+A core difficulty arises when clients have small and heterogeneous samples. In such settings, the conditional independence (CI) tests that underpin causal discovery lose statistical power on small clients, and a class of genuinely useful features — those with weak but globally consistent causal effects — are systematically missed. Our FedCIFL pilot confirms this: a weak stable feature (true effect 0.45) is repeatedly judged as client-local and removed, capping stable-feature recall at 0.875; relaxing the threshold, in turn, admits local spurious features that hold in only one client. Pure data-driven tests cannot distinguish "weak but global" from "strong but local".
+
+Variable names and their field descriptions carry semantic information complementary to the data. A domain reader knows that "smoking years" causes "lung nodules". Recent work shows that large language models (LLMs) can extract such semantic priors to improve causal discovery, but these methods are centralized. The intersection of federated causal feature selection and LLM semantic priors remains open, as highlighted by a 2026 survey.
+
+This paper studies whether a global semantic prior can rescue weak stable causal features in federated low-power settings. Our validation shows three empirical regularities: (i) the prior must be accurate enough — precision ≥ ~0.5 — for the rescue to help; (ii) a strong LLM given variable descriptions can meet this bar, while a small local model and name-only prompts cannot; (iii) combining the prior with client-level consistency checks yields modest but positive gains across three standard Bayesian networks. We therefore position the method as MB-oriented causal feature selection rather than strict parent-only discovery, since the LLM's "relatedness" signal naturally aligns with the Markov blanket.
+
+贡献如下：
+- **方法**：提出「联邦 CI-based MB 发现 + 全局语义先验救援 + 跨客户端一致性 gate」框架，先验只做候选/证据约束，不调节 CI 检验统计量；
+- **机制**：用 G² 条件独立检验 + PC-skeleton 在客户端本地发现，服务器聚合，系统性拒掉远祖节点（MB 精度从 0.33 提升到 1.00）；
+- **判据**：形式化「先验质量阈值」（精度 ≥ ~0.5）以及提示词设计（名字 + 描述 + 直接父列表式）对先验质量的决定性影响；
+- **验证**：在 CHILD/ALARM/INSURANCE 三个网络、45 个多父目标上，强模型（DeepSeek）配描述时 28/45 目标提升、平均 ΔF1 ≈ +0.038，而本地 7B 模型为 −0.040。
+
+### 2 Related Works
+
+#### 2.1 联邦因果发现与因果特征选择
+
+FedCIFL [1] 学习联邦因果不变特征，用样本重加权与迭代收缩混杂集处理 Non-IID 与 OOD，但其聚合在低功效客户端上会误删弱稳定特征。FedLCS 做联邦单目标局部 PC 结构学习，FedCMFS 做联邦多标签因果特征选择，FedCDH/FedACD 分别用客户端代理变量和样本质量加权。这些工作均未引入语义先验，且多数假设客户端共享同一图或同等质量。
+
+> 本文差异：保留「本地 CI 发现 + 服务器聚合」的联邦形态，但引入全局语义先验并对低功效客户端降权。
+
+#### 2.2 LLM 语义先验用于因果发现
+
+DMCD 用 LLM 从变量元数据生成草稿 DAG 再以 CI 检验审计；LLM Sparsity Prior 把 LLM 权重注入 Spike-and-Slab 先验；CauTion 估计 LLM 先验可靠性并做集成仲裁。这些均为集中式方法。LLM Cannot Discover Causality [5] 进一步论证：LLM 应限于非决定式辅助，不应把先验注入 CI 统计量，否则破坏检验的渐近性质。
+
+> 本文差异：把语义先验放在**联邦**场景，且严格限制为「候选/证据约束」，不进入检验统计量；并用客户端数据做跨客户端一致性校准。
+
+#### 2.3 Markov Blanket 与因果特征选择
+
+IAMB/HITON-PC 等基于 CI 的 MB 发现是因果特征选择的标准路线；CFS-MI、MCF-Spouse 等在多标签/高效方向扩展。MB 是预测目标的最优特征集（父 + 子 + 配偶），也是本文与「纯父节点发现」区分的关键。
+
+> 本文定位：面向 MB 的因果特征选择；LLM 的「相关」先验与 MB 语义一致，而 CI 负责最小性。
+
+#### 2.4 研究空白
+
+现有工作分别覆盖了联邦 CI 发现、集中式 LLM 先验、MB 发现，但没有人回答：**在联邦低功效客户端下，语义先验能否可靠地救回 CI 漏掉的弱 MB 成员，其精度门槛是多少，何种先验来源能达到？** 本文围绕这一空白展开。
+
+### 3 Method
+
+#### 3.1 问题设定
+
+设有 K 个客户端，第 k 个客户端持有本地数据 D_k = (X_k, Y_k)，原始数据不出本地。目标是从中恢复目标 Y 的 Markov blanket MB(Y)（父、子、配偶）或其中的稳定因果特征集合。
+
+假设：
+1. 客户端共享变量空间与目标定义；
+2. 客户端内因果充分性或至少局部忠实性成立（PC 骨架所需）；
+3. 客户端差异（样本量、标签先验）不改变目标父机制（本文只救援与数据不矛盾的特征）；
+4. 语义先验来自变量名与字段描述，不依赖任何客户端数据。
+
+#### 3.2 方法总览
+
+```text
+全局：LLM(变量名+描述) → 直接父先验 π
+每个客户端：G² + PC-skeleton → 本地 PC 集
+服务器：聚合 PC 集（多数/并集，低功效降权）
+        + 先验救援（π=1 且跨客户端弱相关）
+        + 一致性 gate（符号/跨客户端支持）
+输出：稳定 MB 集 + 客户端局部结构 + 不确定集
+```
+
+#### 3.3 全局语义先验
+
+服务器对每个候选特征 j 与目标 Y，用强 LLM（本文验证用 DeepSeek）在给定**变量名 + 语义描述 + 全变量列表**的条件下，询问「j 是否为 Y 的直接父节点」，得到二值先验：
+
+$$
+\pi_j = \mathbb{1}[\text{LLM 判定 } j \text{ 为 } Y \text{ 的直接父节点}]
+$$
+
+设计要点（经验证）：
+- **必须提供描述**：仅名字时强模型也会把子节点/祖节点误判；
+- **列表式提问**优于逐特征二元提问（后者过度标记）；
+- **方向中立**：明确允许正/负因果效应，避免漏掉保护性因素；
+- 先验只表示「候选」，不表示置信度，也不进入 CI 统计量。
+
+#### 3.4 本地 CI-based MB 发现
+
+每个客户端 k 在本地执行 PC-skeleton（目标侧）：
+
+1. 候选集 C_k = { j : G²(j, Y) 的 p 值 < α }（边际相关筛选）；
+2. 对每个 j ∈ C_k，按条件集大小 l = 1..L 枚举 S ⊆ C_k \ {j}，若存在 S 使 G²(j, Y | S) 的 p 值 ≥ α，则从 C_k 移除 j；
+3. 输出本地 PC 集 PC_k（父 + 子）。
+
+其中 G² 检验按条件集分层计算，自由度按有效层数累计。本文取 α=0.05、L=2。
+
+#### 3.5 服务器聚合
+
+服务器只接收各客户端的 PC 集（或等价的检验摘要），不接收原始数据：
+
+$$
+\text{PC}_{\text{union}} = \bigcup_k \text{PC}_k, \qquad
+\text{PC}_{\text{majority}} = \{ j : |\{k : j \in \text{PC}_k\}| \ge \lceil K/2 \rceil \}
+$$
+
+低功效客户端（样本量小）的 PC 集噪声大，多数投票天然降权；需要更高召回时用并集，需要更高精度时用多数。
+
+#### 3.6 先验救援
+
+为救回 CI 因低功效漏掉的弱 MB 成员，定义「跨客户端弱相关」集合：
+
+$$
+W = \{ j : j \text{ 在至少 } 2 \text{ 个客户端的边际 G}^2 \text{ 检验中 } p < \alpha_w \}
+$$
+
+救援集为：
+
+$$
+R = \{ j : \pi_j = 1 \ \text{且}\ j \in W \}
+$$
+
+最终稳定集 S = PC_majority ∪ R（或 PC_union ∪ R）。救援要求「先验说相关」且「数据有弱信号」，二者缺一不可，从而避免纯先验的假阳性。
+
+#### 3.7 跨客户端一致性 gate
+
+当方法同时估计本地效应 β_{j,k} 时（如加权逻辑回归），对救援特征追加一致性约束：
+
+$$
+\text{sign-consistency}_j = \frac{|\sum_k \text{sign}(\beta_{j,k}) \mathbb{1}[\text{sig}_k]|}{\sum_k \mathbb{1}[\text{sig}_k]} \ge \gamma
+$$
+
+并要求显著客户端数 ≥ k_min。符号冲突（如跨客户端正负相反）的特征不进入稳定集，而记为客户端局部或不确定。本文取 γ=0.8、k_min=2。
+
+#### 3.8 复杂度与隐私
+
+- 本地 PC-skeleton 复杂度为 O(|C_k| · Σ_l C(|C_k|, l))，在 |C_k|≈15、L=2 时可接受；
+- 通信量仅为各客户端 PC 集（O(d) 级），远小于原始数据；
+- 全局先验只依赖变量名/描述，不含任何客户端样本，天然隐私友好。
+
+#### 3.9 假设与边界（经验证）
+
+1. **先验精度门槛**：模拟扫描表明先验精度 p ≥ 0.5~0.6 时救援才有净收益，p < 0.4 时为负。本地 7B 模型实测 p≈0~0.4，故不可行；DeepSeek+描述实测 p≈0.41~0.67，故可行。
+2. **描述依赖**：仅有变量名时先验不可靠；提供语义描述后显著改善。
+3. **目标依赖**：45 个目标中 28 个提升（62%），平均 +0.038，收益与先验精度和数据结构相关，论文需诚实呈现。
+4. **MB 而非纯父**：先验是「相关」信号，与 MB 语义一致；若目标是严格父节点集，需额外定向规则。
+
+> 方法不解决：未观测混杂下的可识别性、非离散变量的 CI 检验、跨客户端机制变化的严格识别。
+
+---
+
 ## References
 
 [1] Guo, Xianjie, et al. "Federated Causally Invariant Feature Learning." *Proceedings of the AAAI Conference on Artificial Intelligence*, vol. 39, no. 16, 2025.
@@ -126,7 +269,8 @@
 
 ---
 
-> ⚠️ **阶段 A 完成节点**
-> 请审查 Part 1 的 Motivation、三层 RQ 与 Key Works 后，确认是否可以进入阶段 B（Idea 深化）。
-> - 可以继续 → 进入阶段 B
+> ⚠️ **Part 2 完成节点**
+> Part 2（Introduction / Related Works / Method）已根据验证结果撰写（2026-11-26）。
+> 请审阅 Method 的 3.3–3.9 是否准确反映已验证的方法；确认后可进入阶段 C（实验设计 Part 3）。
+> - 可以继续 → 进入 Part 3（主实验/消融/边界实验设计）
 > - 需要修改 → 提出意见，迭代更新后再次确认
